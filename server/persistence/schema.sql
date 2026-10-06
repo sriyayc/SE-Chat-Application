@@ -1,0 +1,1 @@
+-- Tables: User, ChatRoom, RoomMember, Message, Session, AuditLog (see SAD)
