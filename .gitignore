@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# never commit secrets or runtime data
+certs/*.key
+config.json
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+*.db
+*.log
