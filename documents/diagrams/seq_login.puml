@@ -1,0 +1,60 @@
+@startuml seq_login
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam sequenceMessageAlign center
+autonumber
+title Sequence Diagram 1 - User Login / Connection
+
+actor User
+participant "Client UI" as UI
+participant "Client Network\nHandler" as CNH
+participant "Connection\nManager" as CM
+participant "Protocol &\nValidation" as PV
+participant "Auth & Session\nService" as AUTH
+participant "Data\nRepository" as REPO
+database "SQLite" as DB
+participant "Presence\nService" as PRES
+participant "Audit\nLogger" as LOG
+
+User -> UI : enter host, port, username, password
+UI -> CNH : connect(host, port)
+CNH -> CM : TCP connect
+CM -> CNH : TLS handshake (server cert)
+CNH -> CNH : verify cert against pinned copy
+alt pin mismatch / handshake failure
+  CNH --> UI : "Secure connection failed"
+else TLS established
+  CM -> CM : spawn reader + writer threads\nstate = UNAUTHENTICATED
+  note right of CM : Only REGISTER / LOGIN / PING\naccepted in this state (CHAT-F-002)
+  UI -> CNH : login(username, password)
+  CNH -> CM : frame{type: LOGIN, payload}
+  CM -> PV : decode frame
+  PV -> PV : check length <= max, JSON schema,\nfield lengths (CHAT-SR-004)
+  alt invalid frame
+    PV --> CNH : ERROR{code: INVALID_MESSAGE}
+  else valid
+    PV -> AUTH : authenticate(username, password)
+    AUTH -> REPO : get_user(username)
+    REPO -> DB : SELECT hash, salt, role, status
+    DB --> REPO : row
+    REPO --> AUTH : user record
+    AUTH -> AUTH : scrypt(password, salt)\ncompare_digest(hash)
+    alt wrong credentials / account restricted (CHAT-F-015)
+      AUTH -> LOG : auth_failure(username, reason)\n[no password logged]
+      AUTH --> CNH : ERROR{code: AUTH_FAILED}\n(same code for both cases:\nno username enumeration)
+      CNH --> UI : show error
+    else success
+      AUTH -> AUTH : token = secrets.token_urlsafe(32)
+      AUTH -> REPO : insert_session(user, token, socket_id)
+      REPO -> DB : INSERT Session
+      AUTH -> CM : state = AUTHENTICATED
+      AUTH -> LOG : auth_success(user, session)
+      AUTH --> CNH : ACK{session token, role}
+      AUTH -> PRES : user_online(user)
+      PRES -> CM : enqueue EVENT{presence} to online users
+      CNH --> UI : show connected + online list (CHAT-F-004)
+    end
+  end
+end
+@enduml

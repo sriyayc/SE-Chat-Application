@@ -1,0 +1,56 @@
+@startuml component
+skinparam componentStyle uml2
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam packageStyle rectangle
+skinparam nodesep 40
+skinparam ranksep 55
+title Chat Application - Component Diagram
+
+package "Chat Client (Python / Tkinter)" as CLIENT {
+  [Client UI] as UI
+  [Client Network Handler] as CNH
+}
+
+package "Chat Server (Python)" as SERVER {
+  package "Transport Layer" as TL {
+    [Connection Manager] as CM
+  }
+  package "Protocol Layer" as PL {
+    [Protocol & Validation] as PV
+  }
+  package "Service Layer" as SL {
+    [Message Router] as ROUTER
+    [Room Manager] as ROOM
+    [Admin Service] as ADMIN
+    [Auth & Session Service] as AUTH
+    [Presence Service] as PRES
+  }
+  package "Persistence Layer" as PERS {
+    [Data Repository] as REPO
+  }
+  package "Cross-cutting" as CC {
+    [Audit Logger] as LOG
+  }
+}
+
+database "SQLite (WAL)" as DB
+file "Protected Log Files\n(0600, rotated)" as LOGF
+
+UI -right-> CNH : UI queue\n(root.after)
+CNH -down-> CM : TLS 1.2+ over TCP\nlength-prefixed JSON frames
+CM -down-> PV : decoded frames
+PV -down-> AUTH
+PV -down-> ROOM
+PV -down-> ROUTER
+PV -down-> ADMIN
+AUTH -right-> PRES : session events
+ROUTER -right-> ROOM : membership
+ADMIN -right-> AUTH : restrict user
+SL -down-> REPO : read / write
+REPO -down-> DB
+SL .right.> LOG : security & admin events
+LOG -down-> LOGF
+ROUTER .up.> CM : outbound queues\n(EVENT / ACK / ERROR)
+@enduml

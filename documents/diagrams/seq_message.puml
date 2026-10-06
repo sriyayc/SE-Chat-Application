@@ -1,0 +1,53 @@
+@startuml seq_message
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam sequenceMessageAlign center
+autonumber
+title Sequence Diagram 2 - Sending a Chat Message to a Room
+
+actor Sender
+participant "Sender\nClient" as SC
+participant "Connection Manager\n(sender reader thread)" as CM
+participant "Protocol &\nValidation" as PV
+participant "Auth & Session\nService" as AUTH
+participant "Message\nRouter" as ROUTER
+participant "Room\nManager" as ROOM
+participant "Data\nRepository" as REPO
+participant "Recipient outbound\nqueue + writer thread" as WQ
+participant "Recipient\nClient" as RC
+
+Sender -> SC : type message, press Send
+SC -> CM : frame{type: MSG, session, seq, room, text}
+CM -> PV : decode frame
+PV -> PV : length prefix <= max frame size?\nschema + text length check
+alt oversized / malformed (CHAT-F-009)
+  PV --> SC : ERROR{code: INVALID_MESSAGE, ref_seq}
+else valid
+  PV -> AUTH : validate_session(token)
+  alt session expired / invalid (CHAT-SR-006)
+    AUTH --> SC : ERROR{code: SESSION_EXPIRED}
+  else session valid
+    AUTH -> AUTH : touch last_activity
+    PV -> ROUTER : route(sender, room, seq, text)
+    ROUTER -> ROOM : is_member(sender, room)?
+    alt not a member (CHAT-SR-003)
+      ROUTER --> SC : ERROR{code: FORBIDDEN}
+    else member
+      ROOM --> ROUTER : online members
+      ROUTER -> REPO : save_message() via DB writer queue
+      note right of REPO : Async write: forwarding is not\nblocked by disk I/O (CHAT-NF-001)
+      loop each online member except sender
+        ROUTER -> WQ : put(EVENT{msg, sender, seq, ts})
+        WQ -> RC : send frame (single writer per socket,\nso frames never interleave)
+        RC -> RC : display; assert seq increasing\nper sender (CHAT-F-008)
+      end
+      alt no recipient online (CHAT-F-010)
+        ROUTER --> SC : ACK{status: STORED_NOT_DELIVERED}
+      else delivered
+        ROUTER --> SC : ACK{ref_seq, status: DELIVERED}
+      end
+    end
+  end
+end
+@enduml
