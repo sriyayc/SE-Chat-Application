@@ -1,14 +1,25 @@
 """Wires the server layers together."""
 import threading
 
+from server.persistence.repository import Repository
 from server.protocol.dispatcher import Dispatcher
+from server.services.auth import AuthService
+from server.services.presence import Presence
+from server.services.sessions import SessionService
 from server.transport.connection_manager import ConnectionManager
 
 
 class ChatServer:
     def __init__(self, config):
         self.config = config
-        self.dispatcher = Dispatcher(config)
+        self.repo = Repository(config["db_path"])
+        self.presence = Presence()
+        self.dispatcher = Dispatcher(
+            config,
+            auth=AuthService(self.repo),
+            sessions=SessionService(self.repo),
+            presence=self.presence,
+        )
         self.connections = ConnectionManager(config, self.dispatcher.handle, self.dispatcher.disconnected)
         self._thread = None
 
@@ -27,3 +38,4 @@ class ChatServer:
         self.connections.stop()
         if self._thread is not None:
             self._thread.join(5)
+        self.repo.close()

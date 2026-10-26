@@ -33,7 +33,8 @@ class ClientConnection:
         self.sock = sock
         self.addr = addr
         self.state = UNAUTHENTICATED
-        self.user = None
+        self.user = None      # {"id", "username", "role"} once logged in
+        self.session = None   # sessions.Session once logged in
         self.outbound = queue.Queue(maxsize=OUTBOUND_QUEUE_SIZE)
         self._closed = threading.Event()
 
@@ -43,6 +44,9 @@ class ClientConnection:
     @property
     def authenticated(self):
         return self.state == AUTHENTICATED
+
+    def set_authenticated(self):
+        self.state = AUTHENTICATED
 
     @property
     def closed(self):
