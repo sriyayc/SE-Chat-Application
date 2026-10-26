@@ -5,6 +5,7 @@ import logging.handlers
 import os
 import sys
 
+from server.app import ChatServer
 from server.config import ConfigError, load_config
 
 log = logging.getLogger("server")
@@ -40,7 +41,16 @@ def main(argv=None):
         print(f"Configuration error: {e}", file=sys.stderr)
         return 2
     configure_logging(config)
-    log.info("configuration loaded; listening address %s:%s", config["host"], config["port"])
+    server = ChatServer(config)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        log.info("shutting down")
+    except OSError as e:
+        log.error("cannot listen on %s:%s: %s", config["host"], config["port"], e)
+        return 1
+    finally:
+        server.stop()
     return 0
 
 
