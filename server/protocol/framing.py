@@ -18,13 +18,17 @@ class FrameError(Exception):
 
 
 class FrameTooLarge(FrameError):
-    """The length prefix exceeds the limit. The body was not read, so the stream is out of sync."""
+    """The length prefix exceeds the limit. The body has not been read: call discard() to skip it."""
+
+    def __init__(self, message, length):
+        super().__init__(message)
+        self.length = length
 
 
 def encode(message, max_bytes=None):
     body = json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     if max_bytes is not None and len(body) > max_bytes:
-        raise FrameTooLarge(f"frame of {len(body)} bytes exceeds {max_bytes}")
+        raise FrameTooLarge(f"frame of {len(body)} bytes exceeds {max_bytes}", len(body))
     return HEADER.pack(len(body)) + body
 
 
@@ -39,6 +43,12 @@ def recv_exact(sock, n):
     return bytes(buf)
 
 
+def discard(sock, n):
+    """Read and throw away n bytes without buffering them all."""
+    while n > 0:
+        n -= len(recv_exact(sock, min(n, 65536)))
+
+
 def read_frame(sock, max_bytes):
     """Read one frame and return the decoded JSON object.
 
@@ -47,7 +57,7 @@ def read_frame(sock, max_bytes):
     """
     (length,) = HEADER.unpack(recv_exact(sock, HEADER.size))
     if length > max_bytes:
-        raise FrameTooLarge(f"frame of {length} bytes exceeds {max_bytes}")
+        raise FrameTooLarge(f"frame of {length} bytes exceeds {max_bytes}", length)
     body = recv_exact(sock, length)
     try:
         message = json.loads(body.decode("utf-8"))

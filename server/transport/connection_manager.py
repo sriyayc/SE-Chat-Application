@@ -11,7 +11,7 @@ import socket
 import threading
 
 from server.protocol import messages
-from server.protocol.framing import ConnectionClosed, FrameError, encode, read_frame
+from server.protocol.framing import ConnectionClosed, FrameError, FrameTooLarge, discard, encode, read_frame
 
 log = logging.getLogger(__name__)
 
@@ -20,6 +20,8 @@ AUTHENTICATED = "AUTHENTICATED"
 CLOSING = "CLOSING"
 
 OUTBOUND_QUEUE_SIZE = 1000
+# Oversized frames up to this size are skipped so the client can carry on; larger ones close the connection.
+DISCARD_LIMIT = 1 << 20
 ACCEPT_POLL_SECONDS = 0.5
 
 
@@ -39,6 +41,10 @@ class ClientConnection:
         return f"<conn {self.id} {self.addr[0]}:{self.addr[1]} {self.state}>"
 
     @property
+    def authenticated(self):
+        return self.state == AUTHENTICATED
+
+    @property
     def closed(self):
         return self._closed.is_set()
 
@@ -53,6 +59,9 @@ class ClientConnection:
             log.warning("%r outbound queue full; dropping client", self)
             self.close()
             return False
+
+    def wait_closed(self, timeout):
+        return self._closed.wait(timeout)
 
     def close_after_flush(self):
         """Close once everything already queued has been sent (e.g. after a final ERROR or ACK)."""
@@ -147,7 +156,24 @@ class ConnectionManager:
         reason = "closed"
         try:
             while not conn.closed:
-                message = read_frame(conn.sock, self.max_frame_bytes)
+                try:
+                    message = read_frame(conn.sock, self.max_frame_bytes)
+                except FrameTooLarge as e:
+                    log.warning("%r sent an oversized frame (%d bytes)", conn, e.length)
+                    conn.send(messages.error(None, messages.INVALID_MESSAGE, str(e)))
+                    if e.length > DISCARD_LIMIT:
+                        # Too big to skip: close once the error has been sent.
+                        reason = f"oversized frame of {e.length} bytes"
+                        conn.close_after_flush()
+                        conn.wait_closed(2)
+                        return
+                    discard(conn.sock, e.length)
+                    continue
+                except FrameError as e:
+                    # The length prefix was honoured, so the stream is still in sync.
+                    log.warning("%r sent a malformed frame: %s", conn, e)
+                    conn.send(messages.error(None, messages.INVALID_MESSAGE, str(e)))
+                    continue
                 try:
                     self._on_message(conn, message)
                 except Exception:
@@ -155,8 +181,6 @@ class ConnectionManager:
                     log.exception("error handling message from %r", conn)
         except (ConnectionClosed, ConnectionResetError, ConnectionAbortedError):
             reason = "client disconnected"
-        except FrameError as e:
-            reason = f"bad frame: {e}"
         except socket.timeout:
             reason = "timed out"
         except OSError as e:
