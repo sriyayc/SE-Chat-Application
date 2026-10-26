@@ -9,16 +9,18 @@ log = logging.getLogger(__name__)
 
 
 class Dispatcher:
-    def __init__(self, config, auth, sessions, presence):
+    def __init__(self, config, auth, sessions, presence, router):
         self.max_text_chars = config["max_text_chars"]
         self.auth = auth
         self.sessions = sessions
         self.presence = presence
+        self.router = router
         self._handlers = {
             "PING": self._ping,
             "REGISTER": self._register,
             "LOGIN": self._login,
             "LOGOUT": self._logout,
+            "MSG": self._msg,
         }
 
     def handle(self, conn, message):
@@ -82,6 +84,9 @@ class Dispatcher:
         self._end_session(conn)
         conn.send(messages.ack(request.seq, "LOGGED_OUT"))
         conn.close_after_flush()
+
+    def _msg(self, conn, request):
+        conn.send(self.router.route(conn, request))
 
     def _end_session(self, conn):
         if conn.user is not None:

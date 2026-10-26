@@ -37,6 +37,14 @@ class RawClient:
             if message.get("ref_seq") == seq:
                 return message
 
+    def sign_in(self, username, password="password-123"):
+        """Register (if needed) and log in; returns self for chaining."""
+        self.reply_to(self.request("REGISTER", {"username": username, "password": password}))
+        reply = self.reply_to(self.request("LOGIN", {"username": username, "password": password}))
+        assert reply["type"] == "ACK", reply
+        self.session = reply["data"]["session"]
+        return self
+
     def close(self):
         self.sock.close()
 
