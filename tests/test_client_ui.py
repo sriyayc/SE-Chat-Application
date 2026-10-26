@@ -1,0 +1,123 @@
+"""Issue #6: the Tkinter client against a real server (CHAT-F-001, CHAT-F-002, CHAT-NF-004; TC-UX-01).
+
+Skipped where no display is available (for example on CI).
+"""
+import gc
+import time
+
+import pytest
+
+tk = pytest.importorskip("tkinter")
+
+from client.ui.app import ChatApp, describe_error  # noqa: E402
+
+
+@pytest.fixture
+def root():
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display available")
+    root.withdraw()
+    yield root
+    root.destroy()
+    # Collect the app's Tk variables here, on the main thread. Left to the garbage
+    # collector they can be freed on a server thread, which Tkinter does not allow.
+    gc.collect()
+
+
+def pump(root, condition, timeout=10):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        root.update()
+        if condition():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def chat_text(app):
+    return app.log.get("1.0", "end")
+
+
+def lines_with_tag(app, tag):
+    ranges = app.log.tag_ranges(tag)
+    return [app.log.get(start, end) for start, end in zip(ranges[0::2], ranges[1::2])]
+
+
+def make_app(root, address, username, password="password-123"):
+    app = ChatApp(root, *address)
+    app.user_var.set(username)
+    app.password_var.set(password)
+    return app
+
+
+def test_register_chat_and_logout(root, server_address, connect):
+    app = make_app(root, server_address, "alice")
+    app.register()
+    assert pump(root, lambda: app.username == "alice"), app.login_message.cget("text")
+    assert app.chat_frame.winfo_manager() == "pack"
+    assert app.status_var.get() == "Connected as alice"
+    assert app.password_var.get() == ""
+
+    bob = connect().sign_in("bob")
+
+    app.to_var.set("bob")
+    app.text_var.set("hello bob")
+    app.send_message()
+    assert app.text_var.get() == ""
+    event = bob.recv()
+    assert event["data"] == {**event["data"], "from": "alice", "text": "hello bob"}
+    assert any("hello bob" in line for line in lines_with_tag(app, "me"))
+
+    bob.request("MSG", {"to": "alice", "text": "hi alice"})
+    assert pump(root, lambda: "hi alice" in chat_text(app))
+    assert any("hi alice" in line for line in lines_with_tag(app, "them"))
+
+    carol = connect()
+    carol.reply_to(carol.request("REGISTER", {"username": "carol", "password": "password-123"}))
+    app.to_var.set("carol")
+    app.text_var.set("anyone there?")
+    app.send_message()
+    assert pump(root, lambda: "carol is offline" in chat_text(app))
+
+    app.logout()
+    assert pump(root, lambda: app.login_frame.winfo_manager() == "pack")
+    assert app.login_message.cget("text") == "You have logged out."
+    assert app.status_var.get() == "Not connected"
+
+
+def test_failed_login_shows_generic_message(root, server_address):
+    app = make_app(root, server_address, "nobody")
+    app.login()
+    assert pump(root, lambda: "Login failed" in app.login_message.cget("text"))
+    assert str(app.login_button.cget("state")) == "normal"
+
+
+def test_unreachable_server_is_reported(root):
+    app = make_app(root, ("127.0.0.1", 1), "alice")
+    app.login()
+    assert pump(root, lambda: "Could not connect" in app.login_message.cget("text"))
+    assert app.status_var.get() == "Not connected"
+
+
+def test_server_going_away_returns_to_login(root, make_server):
+    server, address = make_server()
+    app = make_app(root, address, "alice")
+    app.register()
+    assert pump(root, lambda: app.username == "alice")
+    server.stop()
+    assert pump(root, lambda: "Disconnected from the server" in app.login_message.cget("text"))
+
+
+def test_empty_fields_are_caught_locally(root, server_address):
+    app = make_app(root, server_address, "")
+    app.login()
+    assert app.login_message.cget("text") == "Enter a username and password."
+    assert app.conn is None
+
+
+def test_describe_error_hides_internals():
+    assert describe_error({"code": "AUTH_FAILED", "reason": "x"}).startswith("Login failed")
+    assert describe_error({"code": "NOT_FOUND", "reason": "there is no user called bob"}) == "there is no user called bob"
+    assert describe_error({"code": "WHATEVER"}) == "Request failed (WHATEVER)"
