@@ -69,6 +69,8 @@ class ChatConnection:
             while True:
                 message = read_frame(self._sock, MAX_INCOMING_FRAME)
                 request_type = self._pending.pop(message.get("ref_seq"), None)
+                if message.get("type") == "ACK" and request_type == "LOGIN":
+                    self.session = message.get("data", {}).get("session")
                 self.events.put(("message", message, request_type))
         except ConnectionClosed:
             reason = "server closed the connection"
