@@ -23,5 +23,16 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
+      - name: Generate TLS test certificate
+        run: |
+          mkdir -p certs
+          openssl req -x509 -newkey rsa:2048 \
+            -keyout certs/server.key \
+            -out certs/server.crt \
+            -days 1 \
+            -nodes \
+            -subj "/CN=127.0.0.1" \
+            -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
+
       - name: Run tests
         run: python -m pytest -v
