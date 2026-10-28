@@ -13,3 +13,6 @@ logs/*
 !logs/.gitkeep
 *.db
 *.log
+# Keep local TLS secrets and certificate generator out of GitHub
+certs/*.key
+generate_cert.py

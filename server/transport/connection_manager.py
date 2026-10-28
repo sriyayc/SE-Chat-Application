@@ -1,17 +1,22 @@
-"""Accept loop, per-client reader/writer threads, connection cap, cleanup on disconnect.
 
-Each client gets a reader thread (decodes frames and hands them to the dispatcher),
-a writer thread and its own outbound queue, so a slow client never holds up anyone
-else and frames to one socket never interleave (SAD, Chosen Architecture Pattern).
-"""
+"""Accept loop, per-client reader/writer threads, connection cap, cleanup on disconnect."""
+
 import itertools
 import logging
 import queue
 import socket
+import ssl
 import threading
 
 from server.protocol import messages
-from server.protocol.framing import ConnectionClosed, FrameError, FrameTooLarge, discard, encode, read_frame
+from server.protocol.framing import (
+    ConnectionClosed,
+    FrameError,
+    FrameTooLarge,
+    discard,
+    encode,
+    read_frame,
+)
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +25,6 @@ AUTHENTICATED = "AUTHENTICATED"
 CLOSING = "CLOSING"
 
 OUTBOUND_QUEUE_SIZE = 1000
-# Oversized frames up to this size are skipped so the client can carry on; larger ones close the connection.
 DISCARD_LIMIT = 1 << 20
 ACCEPT_POLL_SECONDS = 0.5
 
@@ -33,8 +37,8 @@ class ClientConnection:
         self.sock = sock
         self.addr = addr
         self.state = UNAUTHENTICATED
-        self.user = None      # {"id", "username", "role"} once logged in
-        self.session = None   # sessions.Session once logged in
+        self.user = None
+        self.session = None
         self.outbound = queue.Queue(maxsize=OUTBOUND_QUEUE_SIZE)
         self._closed = threading.Event()
 
@@ -53,9 +57,10 @@ class ClientConnection:
         return self._closed.is_set()
 
     def send(self, message):
-        """Queue a message for the writer thread. Drops the client if it has fallen too far behind."""
+        """Queue a message for the writer thread."""
         if self.closed:
             return False
+
         try:
             self.outbound.put_nowait(message)
             return True
@@ -68,8 +73,9 @@ class ClientConnection:
         return self._closed.wait(timeout)
 
     def close_after_flush(self):
-        """Close once everything already queued has been sent (e.g. after a final ERROR or ACK)."""
+        """Close after queued messages have been sent."""
         self.state = CLOSING
+
         try:
             self.outbound.put_nowait(None)
         except queue.Full:
@@ -78,29 +84,38 @@ class ClientConnection:
     def close(self):
         if self._closed.is_set():
             return
+
         self._closed.set()
         self.state = CLOSING
+
         try:
             self.sock.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass
-        self.sock.close()
+
+        try:
+            self.sock.close()
+        except OSError:
+            pass
 
 
 class ConnectionManager:
     def __init__(self, config, on_message, on_disconnect):
         self.host = config["host"]
         self.port = config["port"]
+        self.tls_cert_path = config["tls_cert_path"]
+        self.tls_key_path = config["tls_key_path"]
         self.max_connections = config["max_connections"]
         self.max_frame_bytes = config["max_frame_bytes"]
-        # Clients ping every heartbeat_seconds, so silence for three intervals means the peer is gone.
         self.read_timeout = config["heartbeat_seconds"] * 3
+
         self._on_message = on_message
         self._on_disconnect = on_disconnect
         self._connections = {}
         self._lock = threading.Lock()
         self._stopping = threading.Event()
         self._listener = None
+        self._tls_context = None
         self.address = None
         self.ready = threading.Event()
 
@@ -109,11 +124,25 @@ class ConnectionManager:
             return len(self._connections)
 
     def serve_forever(self):
-        self._listener = socket.create_server((self.host, self.port), backlog=128)
+        """Start a TLS listener and accept client connections."""
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(
+            certfile=self.tls_cert_path,
+            keyfile=self.tls_key_path,
+        )
+        self._tls_context = context
+
+        self._listener = socket.create_server(
+            (self.host, self.port),
+            backlog=128,
+        )
         self._listener.settimeout(ACCEPT_POLL_SECONDS)
         self.address = self._listener.getsockname()[:2]
-        log.info("listening on %s:%s", *self.address)
+
+        log.info("TLS listener ready on %s:%s", *self.address)
         self.ready.set()
+
         try:
             while not self._stopping.is_set():
                 try:
@@ -124,96 +153,230 @@ class ConnectionManager:
                     if self._stopping.is_set():
                         break
                     raise
+
                 self._accept(sock, addr)
         finally:
             self._listener.close()
 
     def stop(self):
         self._stopping.set()
+
+        if self._listener is not None:
+            try:
+                self._listener.close()
+            except OSError:
+                pass
+
         with self._lock:
             connections = list(self._connections.values())
+
         for conn in connections:
             conn.close()
 
     def _accept(self, sock, addr):
+        """Enforce the connection cap and establish TLS for clients."""
         sock.settimeout(self.read_timeout)
+
+        # Check capacity before TLS negotiation. If full, negotiate TLS
+        # so the client can receive a framed SERVER_BUSY response.
         with self._lock:
+            busy = len(self._connections) >= self.max_connections
+
+        if busy:
+            log.warning(
+                "connection cap %d reached; rejecting %s:%s",
+                self.max_connections,
+                *addr[:2],
+            )
+            try:
+                tls_sock = self._tls_context.wrap_socket(
+                    sock,
+                    server_side=True,
+                    do_handshake_on_connect=True,
+                )
+                tls_sock.sendall(
+                    encode(
+                        messages.error(
+                            None,
+                            messages.SERVER_BUSY,
+                            "server is full, try again later",
+                        )
+                    )
+                )
+            except (OSError, ssl.SSLError):
+                pass
+            finally:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+            return
+
+        try:
+            tls_sock = self._tls_context.wrap_socket(
+                sock,
+                server_side=True,
+                do_handshake_on_connect=False,
+            )
+        except (OSError, ssl.SSLError):
+            sock.close()
+            log.warning("TLS setup failed for %s:%s", *addr[:2])
+            return
+
+        with self._lock:
+            # Recheck capacity to handle simultaneous connection attempts.
             if len(self._connections) >= self.max_connections:
                 busy = True
+                conn = None
             else:
                 busy = False
-                conn = ClientConnection(sock, addr)
+                conn = ClientConnection(tls_sock, addr)
                 self._connections[conn.id] = conn
+
         if busy:
-            log.warning("connection cap %d reached; rejecting %s:%s", self.max_connections, *addr[:2])
             try:
-                sock.sendall(encode(messages.error(None, messages.SERVER_BUSY, "server is full, try again later")))
-            except OSError:
+                tls_sock.do_handshake()
+                tls_sock.sendall(
+                    encode(
+                        messages.error(
+                            None,
+                            messages.SERVER_BUSY,
+                            "server is full, try again later",
+                        )
+                    )
+                )
+            except (OSError, ssl.SSLError):
                 pass
-            sock.close()
+            finally:
+                tls_sock.close()
             return
+
         log.info("%r connected", conn)
-        threading.Thread(target=self._reader, args=(conn,), name=f"reader-{conn.id}", daemon=True).start()
-        threading.Thread(target=self._writer, args=(conn,), name=f"writer-{conn.id}", daemon=True).start()
+
+        threading.Thread(
+            target=self._reader,
+            args=(conn,),
+            name=f"reader-{conn.id}",
+            daemon=True,
+        ).start()
+
+        threading.Thread(
+            target=self._writer,
+            args=(conn,),
+            name=f"writer-{conn.id}",
+            daemon=True,
+        ).start()
 
     def _reader(self, conn):
         reason = "closed"
+
         try:
+            conn.sock.do_handshake()
+
             while not conn.closed:
                 try:
-                    message = read_frame(conn.sock, self.max_frame_bytes)
-                except FrameTooLarge as e:
-                    log.warning("%r sent an oversized frame (%d bytes)", conn, e.length)
-                    conn.send(messages.error(None, messages.INVALID_MESSAGE, str(e)))
-                    if e.length > DISCARD_LIMIT:
-                        # Too big to skip: close once the error has been sent.
-                        reason = f"oversized frame of {e.length} bytes"
+                    message = read_frame(
+                        conn.sock,
+                        self.max_frame_bytes,
+                    )
+                except FrameTooLarge as exc:
+                    log.warning(
+                        "%r sent an oversized frame (%d bytes)",
+                        conn,
+                        exc.length,
+                    )
+                    conn.send(
+                        messages.error(
+                            None,
+                            messages.INVALID_MESSAGE,
+                            str(exc),
+                        )
+                    )
+
+                    if exc.length > DISCARD_LIMIT:
+                        reason = f"oversized frame of {exc.length} bytes"
                         conn.close_after_flush()
                         conn.wait_closed(2)
                         return
-                    discard(conn.sock, e.length)
+
+                    discard(conn.sock, exc.length)
                     continue
-                except FrameError as e:
-                    # The length prefix was honoured, so the stream is still in sync.
-                    log.warning("%r sent a malformed frame: %s", conn, e)
-                    conn.send(messages.error(None, messages.INVALID_MESSAGE, str(e)))
+
+                except FrameError as exc:
+                    log.warning(
+                        "%r sent a malformed frame: %s",
+                        conn,
+                        exc,
+                    )
+                    conn.send(
+                        messages.error(
+                            None,
+                            messages.INVALID_MESSAGE,
+                            str(exc),
+                        )
+                    )
                     continue
+
                 try:
                     self._on_message(conn, message)
                 except Exception:
-                    # A bug while handling one request must not take the connection or the server down.
-                    log.exception("error handling message from %r", conn)
-        except (ConnectionClosed, ConnectionResetError, ConnectionAbortedError):
+                    log.exception(
+                        "error handling message from %r",
+                        conn,
+                    )
+
+        except ssl.SSLError:
+            reason = "TLS handshake or connection failed"
+        except (
+            ConnectionClosed,
+            ConnectionResetError,
+            ConnectionAbortedError,
+        ):
             reason = "client disconnected"
         except socket.timeout:
             reason = "timed out"
-        except OSError as e:
-            reason = "closed" if conn.closed else f"socket error: {e}"
+        except OSError as exc:
+            reason = (
+                "closed"
+                if conn.closed
+                else f"socket error: {exc}"
+            )
         finally:
             self._cleanup(conn, reason)
 
     def _writer(self, conn):
         while not conn.closed:
             try:
-                message = conn.outbound.get(timeout=ACCEPT_POLL_SECONDS)
+                message = conn.outbound.get(
+                    timeout=ACCEPT_POLL_SECONDS
+                )
             except queue.Empty:
                 continue
+
             if message is None:
                 break
+
             try:
                 conn.sock.sendall(encode(message))
             except (TypeError, ValueError):
-                log.exception("could not encode message for %r", conn)
+                log.exception(
+                    "could not encode message for %r",
+                    conn,
+                )
             except OSError:
                 break
+
         conn.close()
 
     def _cleanup(self, conn, reason):
         conn.close()
+
         with self._lock:
             removed = self._connections.pop(conn.id, None) is not None
+
         if removed:
             log.info("%r disconnected (%s)", conn, reason)
+
             try:
                 self._on_disconnect(conn)
             except Exception:

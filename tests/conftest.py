@@ -1,4 +1,6 @@
+
 import socket
+import ssl
 
 import pytest
 
@@ -8,10 +10,22 @@ from server.protocol.framing import encode, read_frame
 
 
 class RawClient:
-    """A bare socket client that speaks the frame protocol, for driving the server in tests."""
+    """A TLS client that speaks the framed protocol for server tests."""
 
-    def __init__(self, address, timeout=5):
-        self.sock = socket.create_connection(address, timeout=timeout)
+    def __init__(self, address, cert_path, timeout=5):
+        context = ssl.create_default_context(cafile=cert_path)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+
+        raw_sock = socket.create_connection(address, timeout=timeout)
+        try:
+            self.sock = context.wrap_socket(
+                raw_sock,
+                server_hostname="127.0.0.1",
+            )
+        except Exception:
+            raw_sock.close()
+            raise
+
         self._seq = 0
         self.session = None
 
@@ -20,7 +34,11 @@ class RawClient:
 
     def request(self, message_type, payload=None, **extra):
         self._seq += 1
-        message = {"type": message_type, "seq": self._seq, "payload": payload or {}}
+        message = {
+            "type": message_type,
+            "seq": self._seq,
+            "payload": payload or {},
+        }
         if self.session:
             message["session"] = self.session
         message.update(extra)
@@ -31,22 +49,35 @@ class RawClient:
         return read_frame(self.sock, 1 << 20)
 
     def reply_to(self, seq):
-        """Read until the ACK/ERROR for `seq` arrives, skipping events."""
+        """Read until the ACK/ERROR for seq arrives, skipping events."""
         while True:
             message = self.recv()
             if message.get("ref_seq") == seq:
                 return message
 
     def sign_in(self, username, password="password-123"):
-        """Register (if needed) and log in; returns self for chaining."""
-        self.reply_to(self.request("REGISTER", {"username": username, "password": password}))
-        reply = self.reply_to(self.request("LOGIN", {"username": username, "password": password}))
+        """Register if needed and log in."""
+        self.reply_to(
+            self.request(
+                "REGISTER",
+                {"username": username, "password": password},
+            )
+        )
+        reply = self.reply_to(
+            self.request(
+                "LOGIN",
+                {"username": username, "password": password},
+            )
+        )
         assert reply["type"] == "ACK", reply
         self.session = reply["data"]["session"]
         return self
 
     def close(self):
-        self.sock.close()
+        try:
+            self.sock.close()
+        except OSError:
+            pass
 
 
 @pytest.fixture
@@ -54,22 +85,30 @@ def make_server(tmp_path):
     servers = []
 
     def start(**overrides):
+        project_root = __import__("pathlib").Path(__file__).resolve().parents[1]
+        cert_path = project_root / "certs" / "server.crt"
+        key_path = project_root / "certs" / "server.key"
+
         settings = {
             "host": "127.0.0.1",
             "port": 0,
+            "tls_cert_path": str(cert_path),
+            "tls_key_path": str(key_path),
             "db_path": str(tmp_path / "chat.db"),
             "log_path": str(tmp_path / "server.log"),
         }
         settings.update(overrides)
-        # An empty file, so a developer's own config.json never changes test behaviour.
+
         empty = tmp_path / "config.json"
         empty.write_text("{}", encoding="utf-8")
+
         server = ChatServer(load_config(empty, **settings))
         address = server.start()
         servers.append(server)
         return server, address
 
     yield start
+
     for server in servers:
         server.stop()
 
@@ -84,10 +123,14 @@ def connect(server_address):
     clients = []
 
     def open_client(address=server_address):
-        client = RawClient(address)
+        from pathlib import Path
+
+        cert_path = Path(__file__).resolve().parents[1] / "certs" / "server.crt"
+        client = RawClient(address, cert_path=str(cert_path))
         clients.append(client)
         return client
 
     yield open_client
+
     for client in clients:
         client.close()
