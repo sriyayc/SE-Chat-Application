@@ -8,12 +8,12 @@ Software Engineering project: a Python client-server chat app over TCP sockets w
 - `server/persistence` - SQLite access
 - `server/audit` - audit log
 - `server/config.py` - settings loader
-- `client/ui`, `client/net` - Tkinter client
+- `client/ui`, `client/net` - CustomTkinter desktop client and network layer
 - `tests` - pytest suite
 - `documents` - SRS, SAD, test plan and diagrams
 
 ## Requirements
-Python 3.11 or later. Everything except pytest comes from the standard library.
+Python 3.11 or later. The client UI uses CustomTkinter; pytest is used for tests.
 
 ## Setup
 Windows (PowerShell):

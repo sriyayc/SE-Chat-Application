@@ -1,1 +1,2 @@
 pytest
+customtkinter>=6.0,<7
