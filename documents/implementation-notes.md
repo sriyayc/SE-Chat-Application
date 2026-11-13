@@ -4,21 +4,18 @@ The SAD, Mini-Project Part-2 and the role-based task division ask for any differ
 implementation and the submitted documents to be written down and explained at the final demo.
 This file tracks those differences. Update it whenever the code and the SAD disagree.
 
-## Sprint 1 (issues #1-#6)
+## Delivered scope
 
-### Planned for later sprints (not deviations, just not built yet)
-| SAD item | Status | Issue |
-|---|---|---|
-| TLS 1.2+ with a pinned server certificate | Done in Sprint 2 (PR #24). | #11 |
-| Session idle timeout and sweeper | The token is checked on every request; idle expiry is not enforced yet. | #11 |
-| Chat rooms, presence events, join/leave notifications | Done in Sprint 2. | #8 |
-| Message persistence and history | Done in Sprint 2. | #9 |
-| Admin service and audit log with redaction | Done in Sprint 2. | #10 |
+The current implementation includes TLS transport, idle-session expiry, presence and rooms,
+direct/room messaging, persistent history, administration, audit logging, and input validation.
+The earlier Sprint 1 “planned for later” list is no longer applicable: these features are present
+in the current code. See the [requirements traceability matrix](requirements-traceability.md) for
+the SRS, SAD, implementation, and STP mapping.
 
 ### Differences from the SAD
 | # | SAD says | Implementation | Why |
 |---|---|---|---|
-| D1 | Offline recipient: `ACK {status: STORED_NOT_DELIVERED}` | Resolved in Sprint 2 (#9): messages are stored and the status is `STORED_NOT_DELIVERED`, with a `reason`. | |
+| D1 | Offline recipient: `ACK {status: STORED_NOT_DELIVERED}` | Messages are stored and the ACK includes recipient/room, timestamp, and a human-readable `reason` in addition to the status. | Gives the sender enough context to distinguish offline direct delivery from a room with no other online member. |
 | D2 | Oversized frame: rejected before reading the body | Still rejected from the length prefix alone. Bodies up to 1 MB are then skipped (not buffered) so the client can carry on; larger ones get `INVALID_MESSAGE` and the connection is closed. | Without skipping or closing, the TCP stream would be out of sync after the rejection. |
 | D3 | Data Repository: all writes through one writer thread | Chat messages go through a dedicated writer thread (#9). Account, session and room changes are written directly under the same lock, so there is still only one writer at a time. | Those changes must be finished before the reply is sent (for example, a new room must exist before `CREATED` is returned). |
 | D4 | Module layout lists components only | Added `server/app.py` (wires the layers), `server/config.py` (settings), `server/protocol/dispatcher.py` (passes validated requests to services), `server/protocol/messages.py` (ACK/ERROR/EVENT builders and error codes). | Keeps each SAD component in its own module; no new responsibilities. |
@@ -40,7 +37,9 @@ This file tracks those differences. Update it whenever the code and the SAD disa
 | D14 | HISTORY: `room or with, before_ts, limit` | As in the SAD. `limit` defaults to 50 (maximum 100), `before_ts` defaults to now, and the reply has `more: true` when older messages may exist. Room history needs current membership; a direct conversation can only be read by its two participants. | The SAD lists the fields but not the defaults or the permission rule. |
 | D15 | Not specified how an account becomes an administrator | `python -m server.manage make-admin <username>`, run on the server machine. There is no network request that grants the role. | A client must never be able to make itself an administrator (CHAT-SR-003). |
 | D16 | ADMIN: `action, target, args` | Actions: `activate`, `deactivate`, `restrict` (target is a username); `open_room`, `restrict_room`, `remove_room`, `rename_room` with `args.name` (target is a room). Reply `ACK DONE {action, target, ...}`. Admins cannot change their own account. Deactivated or restricted users who are online get `EVENT account {status}` and are disconnected. | The SAD lists the request fields but not the actions. |
-| D17 | AuditLog insert-only | Enforced by database triggers that reject UPDATE and DELETE on AuditLog. Records are written by the background writer thread, like messages. Log files get a redaction filter for passwords and session tokens, and on Linux/macOS are created readable by the server account only (umask 077). Windows has no equivalent permission bits, so there the folder's own permissions apply. | Makes "insert-only" a database guarantee, not just a convention. |
+| D17 | AuditLog insert-only | Enforced by database triggers that reject UPDATE and DELETE on AuditLog. Records are written by the background writer thread, like messages. Log files get a redaction filter for passwords and session tokens, and on Linux/macOS are created readable by the server account only (umask 077). Windows has no equivalent permission bits, so there the folder's own permissions apply. | Makes "insert-only" a database guarantee, not just a convention. This does not prevent an operating-system/database administrator from modifying the database file offline. |
+| D18 | SAD describes certificate pinning | The client loads `certs/server.crt` as a TLS trust file and uses normal certificate-chain and server-name verification. It does not separately compare a configured certificate fingerprint. | A local self-signed certificate can serve as the trust anchor for development, but production certificate provisioning, rotation, and trust-file management must be handled deliberately. |
+| D19 | SRS describes message persistence when enabled | Persistent storage is always enabled; there is no persistence feature flag. Chat message content is stored in SQLite without application-level encryption at rest. | Keeps the implemented history feature available without an additional mode, but does not provide end-to-end or at-rest message encryption. |
 
 ## Protocol summary (as implemented)
 Every frame is a 4-byte big-endian length followed by a UTF-8 JSON object, at most `max_frame_bytes`.
@@ -71,3 +70,21 @@ Other events:
 - `room {action: restricted|opened|removed, room}` and `room {action: renamed, room, name}` go to everyone online.
 - `account {status, reason}` goes to a user an administrator has just deactivated or restricted, before they are disconnected.
 Errors are `ERROR {ref_seq, code, reason}` with the codes from the SAD.
+
+## Verification status and known limitations
+
+- The latest full regression run is recorded in [issue-15-qa-validation.md](issue-15-qa-validation.md):
+  183 passed and 1 skipped. The skip was the Tkinter UI test module in a headless environment.
+- The 50-client test delivered 50 of 50 messages with a measured P90 of 0.0971 seconds in the
+  recorded local run. This is a sample, not a guarantee for other hardware or networks.
+- Idle expiry is implemented in the session service and periodic server worker, but no dedicated
+  test currently advances a session past its timeout and verifies the expiry path.
+- TLS behavior is exercised using a valid ephemeral certificate. Invalid-certificate, TLS
+  downgrade, and production-certificate behavior are not comprehensively tested.
+- Message writes are asynchronous. A database write error is logged and does not stop the server,
+  but persistence can fail after delivery has already occurred.
+- The server is single-instance; clustering and high availability are outside the current
+  implementation.
+
+The detailed requirement-by-requirement assessment, including coverage gaps, is maintained in
+[requirements-traceability.md](requirements-traceability.md).

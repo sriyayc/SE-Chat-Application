@@ -36,16 +36,16 @@ Testing will use the application’s actual client-server communication and the 
 
 ## 4. Test Cases
 
-| Test ID | Test scenario | Expected result |
-|---|---|---|
-| TC-01 | Send messages between two authenticated clients under normal load. | Messages reach the intended recipient. |
-| TC-02 | Measure delivery latency for multiple messages. | 90th-percentile latency is at most 1 second. |
-| TC-03 | Connect 50 authenticated clients simultaneously. | All 50 clients establish authenticated sessions. |
-| TC-04 | Exchange messages between concurrent clients. | Messages are delivered correctly without critical failures. |
-| TC-05 | Forcefully disconnect one authenticated client. | Server detects and cleans up the disconnected session. |
-| TC-06 | Continue communication between other clients after disconnection. | Other active sessions remain functional. |
-| TC-07 | Attempt communication after session disconnection. | Disconnected client cannot continue using its expired session. |
-| TC-08 | Run regression tests after defect fixes. | Previously working functionality continues to pass. |
+| Test ID | Test scenario | Expected result | Result / evidence |
+|---|---|---|---|
+| TC-01 | Send messages between two authenticated clients under normal load. | Messages reach the intended recipient. | Passed; `tests/test_messaging.py::test_message_reaches_recipient_and_sender_gets_ack`. |
+| TC-02 | Measure delivery latency for multiple messages. | 90th-percentile latency is at most 1 second. | Passed in the 50-client sample; P90 0.0971 seconds. |
+| TC-03 | Connect 50 authenticated clients simultaneously. | All 50 clients establish authenticated sessions. | Passed; 50 clients authenticated in `test_50_authenticated_clients_concurrent_delivery_latency`. |
+| TC-04 | Exchange messages between concurrent clients. | Messages are delivered correctly without critical failures. | Passed; 50 of 50 messages delivered in the same 50-client test. |
+| TC-05 | Forcefully disconnect one authenticated client. | Server detects and cleans up the disconnected session. | Passed; `tests/test_connection.py::test_disconnect_does_not_affect_other_clients`. |
+| TC-06 | Continue communication between other clients after disconnection. | Other active sessions remain functional. | Passed; same connection-recovery test and `test_authenticated_client_disconnect_preserves_other_session`. |
+| TC-07 | Attempt communication after session disconnection. | Disconnected client cannot continue using its expired session. | Not verified for idle expiry; no dedicated test advances a session past its timeout. Token validation/rejection is covered by `tests/test_auth.py`. |
+| TC-08 | Run regression tests after defect fixes. | Previously working functionality continues to pass. | 183 passed, 1 skipped; Tkinter UI tests were skipped without a display. |
 
 ## 5. Requirement Traceability Matrix
 
@@ -72,16 +72,16 @@ The following information will be collected during execution:
 
 | Measurement | Actual result |
 |---|---|
-| Number of authenticated clients | To be recorded |
-| Total messages exchanged | To be recorded |
-| Average message latency | To be recorded |
-| P50 latency | To be recorded |
-| P90 latency | To be recorded |
-| P99 latency | To be recorded |
-| Successful message deliveries | To be recorded |
-| Failed message deliveries | To be recorded |
-| Disconnection recovery result | To be recorded |
-| Regression test result | To be recorded |
+| Number of authenticated clients | 50 |
+| Total messages exchanged | 50 in the concurrent delivery test |
+| Average message latency | 0.0579 seconds |
+| P50 latency | Not reported by the automated test |
+| P90 latency | 0.0971 seconds (threshold: at most 1 second) |
+| P99 latency | Not reported by the automated test |
+| Successful message deliveries | 50 of 50 |
+| Failed message deliveries | 0 in the concurrent delivery test |
+| Disconnection recovery result | Passed: `tests/test_connection.py` verifies cleanup and that another authenticated session remains usable |
+| Regression test result | 183 passed, 1 skipped; Tkinter UI tests were skipped without a display |
 
 ## 8. Defect Tracking
 
@@ -128,8 +128,15 @@ After a defect is fixed:
 
 ## 11. Final QA Summary
 
-The final QA assessment will be completed after reviewing the actual test execution results.
+The 50-client automated test authenticated 50 clients, delivered all 50 test messages, and measured
+a 0.0971-second P90, meeting the stated one-second P90 target for this local test run. The separate
+disconnect-recovery test passed. The full regression run completed with 183 passed and 1 skipped;
+the skipped result is the Tkinter UI module because no graphical display was available.
 
-The application will be considered to satisfy Issue #12 when all acceptance criteria are verified, critical defects are resolved, and the test evidence is documented.
+The measured average and P90 are one local sample, not a guarantee for other hardware or networks.
+P50 and P99 were not calculated by the test. The regression results and environment details are
+recorded in [issue-15-qa-validation.md](issue-15-qa-validation.md), with full requirement coverage
+in [requirements-traceability.md](requirements-traceability.md).
 
-**Status:** Pending test execution and QA review.
+**Status:** Automated performance, concurrency, and disconnect checks passed for the recorded
+environment. UI and further security/session-expiry verification remain outstanding.
