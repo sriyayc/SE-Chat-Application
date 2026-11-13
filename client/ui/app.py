@@ -8,19 +8,28 @@ import queue
 import threading
 import time
 import tkinter as tk
-from tkinter import simpledialog, ttk
+from tkinter import simpledialog
+
+import customtkinter as ctk
 
 from client.net.connection import ChatConnection
 
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
 POLL_MS = 50
 MAX_TEXT_CHARS = 2000
 
-STATUS_COLOURS = {
-    "connected": "#22C55E",
-    "busy": "#F59E0B",
-    "offline": "#EF4444",
-}
+APP_BG = "#0b141a"
+SIDEBAR_BG = "#111b21"
+PANEL_BG = "#17232b"
+INPUT_BG = "#202c33"
+OUTLINE = "#293941"
+TEXT = "#e9edef"
+MUTED = "#8696a0"
+ACCENT = "#00a884"
+ACCENT_HOVER = "#008f72"
+STATUS_COLOURS = {"connected": "#00a884", "busy": "#fbbf24", "offline": "#fb7185"}
 
 FRIENDLY_ERRORS = {
     "AUTH_FAILED": "Login failed. Check your username and password.",
@@ -73,8 +82,10 @@ class ChatApp:
         self._room_names = []         # what each sidebar row shows, in order
         self._user_names = []
 
-        root.title("Chat")
-        root.minsize(720, 460)
+        root.title("Relay | Chat")
+        root.geometry("1180x760")
+        root.minsize(860, 600)
+        root.configure(fg_color=APP_BG)
         root.protocol("WM_DELETE_WINDOW", self.quit)
 
         self._configure_styles()
@@ -86,6 +97,8 @@ class ChatApp:
         self.text_var = tk.StringVar()
         self.status_var = tk.StringVar()
         self.title_var = tk.StringVar()
+        self.subtitle_var = tk.StringVar(value="Choose a room or person to start chatting")
+        self.search_var = tk.StringVar()
 
         self._build_status_bar()
         self._build_login()
@@ -153,210 +166,265 @@ class ChatApp:
     # ---------- status bar ----------
 
     def _build_status_bar(self):
-        bar = tk.Frame(
-            self.root,
-            bg=self.panel,
-            padx=12,
-            pady=9
-        )
-        bar.pack(side="bottom", fill="x")
-
-        self.status_dot = tk.Label(
-            bar,
-            text="●",
-            bg=self.panel,
-            fg=STATUS_COLOURS["offline"],
-            font=("Segoe UI", 10)
-        )
+        bar = ctk.CTkFrame(self.root, fg_color="transparent", height=38)
+        bar.pack(side="bottom", fill="x", padx=18, pady=(0, 8))
+        self.status_dot = ctk.CTkLabel(
+            bar, text="●", text_color=STATUS_COLOURS["offline"], font=("Segoe UI", 12))
         self.status_dot.pack(side="left")
-
-        tk.Label(
-            bar,
-            textvariable=self.status_var,
-            bg=self.panel,
-            fg=self.text_color,
-            font=("Segoe UI", 9)
-        ).pack(side="left", padx=7)
-
-    # ---------- login screen ----------
+        ctk.CTkLabel(
+            bar, textvariable=self.status_var, text_color=MUTED, font=("Segoe UI", 11)
+        ).pack(side="left", padx=(8, 0))
 
     def _build_login(self):
-        self.login_frame = frame = tk.Frame(
-            self.root,
-            bg=self.bg
-        )
+        self.login_frame = frame = ctk.CTkFrame(self.root, fg_color="transparent")
+        frame.pack(fill="both", expand=True, padx=38, pady=28)
+        frame.grid_columnconfigure((0, 1), weight=1, uniform="login")
+        frame.grid_rowconfigure(0, weight=1)
 
-        card = tk.Frame(
-            frame,
-            bg=self.panel,
-            padx=38,
-            pady=30
-        )
+        hero = ctk.CTkFrame(frame, fg_color=SIDEBAR_BG, corner_radius=28)
+        hero.grid(row=0, column=0, sticky="nsew", padx=(0, 14), pady=8)
+        ctk.CTkLabel(
+            hero, text="✦   RELAY", text_color="#aab4ff",
+            font=("Segoe UI", 13, "bold")
+        ).pack(anchor="w", padx=42, pady=(48, 0))
+        ctk.CTkLabel(
+            hero, text="Good conversations\nstart here.",
+            text_color=TEXT, font=("Segoe UI", 34, "bold"), justify="left"
+        ).pack(anchor="w", padx=42, pady=(46, 16))
+        ctk.CTkLabel(
+            hero, text="A calmer place to catch up with your people.",
+            text_color=MUTED, font=("Segoe UI", 14), wraplength=350, justify="left"
+        ).pack(anchor="w", padx=42)
+        ctk.CTkFrame(hero, height=1, fg_color=OUTLINE).pack(fill="x", padx=42, pady=32)
+        for title, detail in (
+            ("Private by design", "Encrypted connections keep your chats protected."),
+            ("Room for everyone", "Create a room or pick up a direct conversation."),
+            ("Always in sync", "See who's online and catch up on saved history."),
+        ):
+            item = ctk.CTkFrame(hero, fg_color="transparent")
+            item.pack(fill="x", padx=42, pady=9)
+            ctk.CTkLabel(
+                item, text="●", text_color=ACCENT, font=("Segoe UI", 12)
+            ).pack(side="left", anchor="n", padx=(0, 12), pady=3)
+            copy = ctk.CTkFrame(item, fg_color="transparent")
+            copy.pack(side="left", fill="x", expand=True)
+            ctk.CTkLabel(
+                copy, text=title, text_color=TEXT, font=("Segoe UI", 13, "bold"),
+                anchor="w"
+            ).pack(anchor="w")
+            ctk.CTkLabel(
+                copy, text=detail, text_color=MUTED, font=("Segoe UI", 11),
+                anchor="w", wraplength=310, justify="left"
+            ).pack(anchor="w", pady=(3, 0))
 
-        card.place(
-            relx=0.5,
-            rely=0.46,
-            anchor="center"
-        )
-
-        tk.Label(
-            card,
-            text="CONNECT",
-            bg=self.panel,
-            fg=self.accent,
-            font=("Segoe UI", 27, "bold")
-        ).pack(pady=(0, 5))
-
-        tk.Label(
-            card,
-            text="Your space to connect and communicate",
-            bg=self.panel,
-            fg=self.muted,
-            font=("Segoe UI", 10)
-        ).pack(pady=(0, 25))
+        card = ctk.CTkFrame(frame, fg_color=PANEL_BG, corner_radius=28)
+        card.grid(row=0, column=1, sticky="nsew", padx=(14, 0), pady=8)
+        ctk.CTkLabel(
+            card, text="Welcome back", text_color=TEXT, font=("Segoe UI", 27, "bold")
+        ).pack(anchor="w", padx=42, pady=(54, 6))
+        ctk.CTkLabel(
+            card, text="Sign in or create an account to continue.",
+            text_color=MUTED, font=("Segoe UI", 12)
+        ).pack(anchor="w", padx=42, pady=(0, 30))
 
         fields = (
-            ("Server Address", self.host_var, {}),
-            ("Port", self.port_var, {}),
-            ("Username", self.user_var, {}),
-            ("Password", self.password_var, {"show": "•"}),
+            ("Server address", self.host_var, {"placeholder_text": "127.0.0.1"}),
+            ("Port", self.port_var, {"placeholder_text": "5050"}),
+            ("Username", self.user_var, {"placeholder_text": "Your username"}),
+            ("Password", self.password_var, {"placeholder_text": "Your password", "show": "•"}),
         )
-
         self.login_entries = []
-
         for label, variable, options in fields:
-            tk.Label(
-                card,
-                text=label,
-                bg=self.panel,
-                fg=self.text_color,
-                font=("Segoe UI", 10, "bold")
-            ).pack(anchor="w", pady=(8, 4))
-
-            entry = ttk.Entry(
-                card,
-                textvariable=variable,
-                width=36,
-                **options
+            ctk.CTkLabel(
+                card, text=label, text_color="#cbd5e1", font=("Segoe UI", 11, "bold")
+            ).pack(anchor="w", padx=42, pady=(0, 7))
+            entry = ctk.CTkEntry(
+                card, textvariable=variable, height=44, corner_radius=12,
+                border_color=OUTLINE, fg_color=INPUT_BG, text_color=TEXT,
+                placeholder_text_color="#66758c", font=("Segoe UI", 12), **options
             )
-
-            entry.pack(fill="x", ipady=3)
-
-            entry.bind(
-                "<Return>",
-                lambda _event: self.login()
-            )
-
+            entry.pack(fill="x", padx=42, pady=(0, 17))
+            entry.bind("<Return>", lambda _e: self.login())
             self.login_entries.append(entry)
-
-        buttons = tk.Frame(
-            card,
-            bg=self.panel
+        buttons = ctk.CTkFrame(card, fg_color="transparent")
+        buttons.pack(fill="x", padx=42, pady=(3, 0))
+        self.register_button = ctk.CTkButton(
+            buttons, text="Create account", command=self.register, height=44,
+            corner_radius=12, fg_color=INPUT_BG, hover_color=OUTLINE,
+            border_width=1, border_color=OUTLINE, text_color=TEXT,
+            font=("Segoe UI", 12, "bold")
         )
-        buttons.pack(fill="x", pady=(22, 10))
-
-        self.register_button = ttk.Button(
-            buttons,
-            text="Register",
-            command=self.register
+        self.register_button.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.login_button = ctk.CTkButton(
+            buttons, text="Sign in", command=self.login, height=44,
+            corner_radius=12, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            font=("Segoe UI", 12, "bold")
         )
-        self.register_button.pack(
-            side="left",
-            expand=True,
-            fill="x",
-            padx=(0, 6)
+        self.login_button.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        self.login_message = ctk.CTkLabel(
+            card, text="", text_color=STATUS_COLOURS["offline"],
+            font=("Segoe UI", 11), wraplength=380, justify="left"
         )
-
-        self.login_button = ttk.Button(
-            buttons,
-            text="Log In",
-            command=self.login
-        )
-        self.login_button.pack(
-            side="left",
-            expand=True,
-            fill="x",
-            padx=(6, 0)
-        )
-
-        self.login_message = tk.Label(
-            card,
-            text="",
-            bg=self.panel,
-            fg="#F87171",
-            font=("Segoe UI", 9),
-            wraplength=350,
-            justify="center"
-        )
-        self.login_message.pack(pady=(10, 0))
-
-    # ---------- chat screen ----------
+        self.login_message.pack(anchor="w", padx=42, pady=(18, 8))
 
     def _build_chat(self):
-        self.chat_frame = frame = ttk.Frame(self.root, padding=10)
+        self.chat_frame = frame = ctk.CTkFrame(self.root, fg_color="transparent")
+        frame.pack(fill="both", expand=True, padx=16, pady=(14, 0))
 
-        sidebar = ttk.Frame(frame, width=210)
-        sidebar.pack(side="left", fill="y", padx=(0, 10))
+        sidebar = ctk.CTkFrame(frame, width=330, fg_color=SIDEBAR_BG, corner_radius=18)
+        sidebar.pack(side="left", fill="y", padx=(0, 12), pady=(0, 8))
         sidebar.pack_propagate(False)
-        ttk.Label(sidebar, text="Rooms", font=("TkDefaultFont", 10, "bold")).pack(anchor="w")
-        self.room_list = tk.Listbox(sidebar, height=8, activestyle="none", exportselection=False)
-        self.room_list.pack(fill="both", expand=True, pady=(2, 4))
-        self.room_list.bind("<<ListboxSelect>>", lambda _e: self._open_selected_room())
-        room_buttons = ttk.Frame(sidebar)
-        room_buttons.pack(fill="x")
-        for column, (text, command) in enumerate((("New", self.ask_new_room), ("Join", self.join_selected_room),
-                                                  ("Leave", self.leave_selected_room))):
-            ttk.Button(room_buttons, text=text, width=1, command=command).grid(
-                row=0, column=column, sticky="ew", padx=(0 if column == 0 else 4, 0))
-            room_buttons.columnconfigure(column, weight=1)
+        brand = ctk.CTkFrame(sidebar, fg_color="transparent", height=62)
+        brand.pack(fill="x", padx=18, pady=(10, 4))
+        brand.pack_propagate(False)
+        ctk.CTkLabel(
+            brand, text="Chats", text_color=TEXT, font=("Segoe UI", 22, "bold")
+        ).pack(side="left")
+        self.add_chat_button = ctk.CTkButton(
+            brand, text="+", command=self.ask_direct_message, width=38, height=38,
+            corner_radius=19, fg_color=INPUT_BG, hover_color=OUTLINE,
+            text_color="#c7d5dc", font=("Segoe UI", 22, "normal")
+        )
+        self.add_chat_button.pack(side="right")
+        self.search_entry = ctk.CTkEntry(
+            sidebar, textvariable=self.search_var, height=38, corner_radius=10,
+            border_width=0, fg_color=INPUT_BG, text_color=TEXT,
+            placeholder_text="⌕   Search chats", placeholder_text_color=MUTED,
+            font=("Segoe UI", 11)
+        )
+        self.search_entry.pack(fill="x", padx=14, pady=(0, 12))
+        self.search_var.trace_add("write", lambda *_args: self._refresh_sidebar())
+        self.chat_list = ctk.CTkScrollableFrame(
+            sidebar, fg_color="transparent", corner_radius=0,
+            scrollbar_button_color="#34454e", scrollbar_button_hover_color="#4a606b"
+        )
+        self.chat_list.pack(fill="both", expand=True, padx=6, pady=(0, 8))
+        self.new_group_button = ctk.CTkButton(
+            sidebar, text="＋   New group", command=self.ask_new_room, height=40,
+            corner_radius=10, fg_color=INPUT_BG, hover_color=OUTLINE,
+            text_color="#c7d5dc", font=("Segoe UI", 11, "bold")
+        )
+        self.new_group_button.pack(side="bottom", fill="x", padx=14, pady=(0, 14))
 
-        # Packed before the user list so it keeps its space when the window is small.
-        ttk.Button(sidebar, text="Message someone…", command=self.ask_direct_message).pack(side="bottom", fill="x")
-        ttk.Label(sidebar, text="Online", font=("TkDefaultFont", 10, "bold")).pack(anchor="w", pady=(12, 0))
-        self.user_list = tk.Listbox(sidebar, height=8, activestyle="none", exportselection=False)
-        self.user_list.pack(fill="both", expand=True, pady=(2, 4))
-        self.user_list.bind("<<ListboxSelect>>", lambda _e: self._open_selected_user())
+        main = ctk.CTkFrame(frame, fg_color="transparent")
+        main.pack(side="left", fill="both", expand=True, pady=(0, 8))
+        top = ctk.CTkFrame(main, fg_color=SIDEBAR_BG, corner_radius=16, height=72)
+        top.pack(fill="x", pady=(0, 12))
+        top.pack_propagate(False)
+        title_box = ctk.CTkFrame(top, fg_color="transparent")
+        title_box.pack(side="left", fill="both", expand=True, padx=18, pady=10)
+        self.header_avatar = ctk.CTkLabel(
+            title_box, text="✦", width=42, height=42, corner_radius=21,
+            fg_color=INPUT_BG, text_color="#9aabb3", font=("Segoe UI", 16, "bold")
+        )
+        self.header_avatar.pack(side="left", padx=(0, 12))
+        title_copy = ctk.CTkFrame(title_box, fg_color="transparent")
+        title_copy.pack(side="left", fill="y", pady=5)
+        self.conversation_heading = ctk.CTkLabel(
+            title_copy, textvariable=self.title_var, text_color=TEXT,
+            font=("Segoe UI", 14, "bold"), anchor="w"
+        )
+        self.conversation_heading.pack(anchor="w", pady=(0, 2))
+        self.conversation_subtitle = ctk.CTkLabel(
+            title_copy, textvariable=self.subtitle_var,
+            text_color=MUTED, font=("Segoe UI", 10), anchor="w"
+        )
+        self.conversation_subtitle.pack(anchor="w")
+        self.room_action_button = ctk.CTkButton(
+            top, text="Join group", command=self.join_selected_room, width=112,
+            height=34, corner_radius=9, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            font=("Segoe UI", 10, "bold")
+        )
+        self.logout_button = ctk.CTkButton(
+            top, text="Log out", command=self.logout, width=92, height=34,
+            corner_radius=9, fg_color=INPUT_BG, hover_color=OUTLINE,
+            text_color="#cbd5e1", font=("Segoe UI", 10, "bold")
+        )
+        self.logout_button.pack(side="right", padx=(8, 14))
 
-        main = ttk.Frame(frame)
-        main.pack(side="left", fill="both", expand=True)
-        top = ttk.Frame(main)
-        top.pack(fill="x")
-        ttk.Label(top, textvariable=self.title_var, font=("TkDefaultFont", 11, "bold")).pack(side="left")
-        self.logout_button = ttk.Button(top, text="Log out", command=self.logout)
-        self.logout_button.pack(side="right")
+        body = ctk.CTkFrame(main, fg_color=PANEL_BG, corner_radius=16)
+        body.pack(fill="both", expand=True, pady=(0, 12))
+        self.empty_canvas = tk.Canvas(
+            body, highlightthickness=0, background="#101d24", borderwidth=0
+        )
+        self.empty_canvas.pack(fill="both", expand=True)
+        self.empty_state = ctk.CTkFrame(
+            body, fg_color="#17262d", corner_radius=20, border_width=1,
+            border_color="#263a42"
+        )
+        ctk.CTkLabel(
+            self.empty_state, text="✦", width=64, height=64, corner_radius=32,
+            fg_color="#123d35", text_color="#6ed6b3", font=("Segoe UI", 28, "bold")
+        ).pack(pady=(26, 16))
+        ctk.CTkLabel(
+            self.empty_state, text="Your chats, all in one place",
+            text_color=TEXT, font=("Segoe UI", 20, "bold")
+        ).pack(padx=34)
+        ctk.CTkLabel(
+            self.empty_state, text="Choose a conversation or start something new.",
+            text_color=MUTED, font=("Segoe UI", 11)
+        ).pack(padx=34, pady=(8, 24))
+        self.empty_window = self.empty_canvas.create_window(
+            0, 0, window=self.empty_state, anchor="center"
+        )
+        self.empty_canvas.bind("<Configure>", self._draw_empty_wallpaper)
+        self.log = tk.Text(
+            body, wrap="word", state="disabled", borderwidth=0, padx=16, pady=14,
+            background="#101d24", foreground=TEXT, insertbackground=TEXT,
+            selectbackground="#303c70", font=("Segoe UI", 11)
+        )
+        self.log_scrollbar = ctk.CTkScrollbar(body, command=self.log.yview)
+        self.log.configure(yscrollcommand=self.log_scrollbar.set)
+        self.log.tag_configure(
+            "me", justify="right", foreground="#e1fff4", background="#075e54",
+            lmargin1=150, lmargin2=150, rmargin=18, spacing1=5, spacing3=5
+        )
+        self.log.tag_configure(
+            "them", justify="left", foreground="#e9edef", background="#202c33",
+            lmargin1=18, lmargin2=18, rmargin=150, spacing1=5, spacing3=5
+        )
+        self.log.tag_configure("meta", font=("Segoe UI", 9), foreground=MUTED)
+        self.log.tag_configure("system", justify="center", foreground="#9aa8bd", font=("Segoe UI", 10, "italic"))
+        self.log.tag_configure("warning", justify="center", foreground="#fbbf24", font=("Segoe UI", 10, "italic"))
 
-        # Packed before the message log so the input row keeps its space when the window is small.
-        bottom = ttk.Frame(main)
-        bottom.pack(side="bottom", fill="x")
-        self.message_entry = ttk.Entry(bottom, textvariable=self.text_var)
-        self.message_entry.pack(side="left", fill="x", expand=True)
+        bottom = ctk.CTkFrame(main, fg_color=PANEL_BG, corner_radius=16)
+        bottom.pack(fill="x")
+        self.message_entry = ctk.CTkEntry(
+            bottom, textvariable=self.text_var, height=44, corner_radius=12,
+            border_width=0, fg_color=INPUT_BG, text_color=TEXT,
+            placeholder_text="Write a message…", placeholder_text_color="#718096",
+            font=("Segoe UI", 11)
+        )
+        self.message_entry.pack(side="left", fill="x", expand=True, padx=(12, 8), pady=10)
         self.message_entry.bind("<Return>", lambda _e: self.send_message())
-        self.send_button = ttk.Button(bottom, text="Send", command=self.send_message)
-        self.send_button.pack(side="left", padx=(8, 0))
+        self.send_button = ctk.CTkButton(
+            bottom, text="Send  ➤", command=self.send_message, width=100, height=42,
+            corner_radius=11, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            font=("Segoe UI", 11, "bold")
+        )
+        self.send_button.pack(side="right", padx=(0, 12), pady=10)
 
-        body = ttk.Frame(main)
-        body.pack(fill="both", expand=True, pady=8)
-        self.log = tk.Text(body, wrap="word", state="disabled", height=12, padx=8, pady=6,
-                           relief="solid", borderwidth=1, font=("TkDefaultFont", 10))
-        scroll = ttk.Scrollbar(body, command=self.log.yview)
-        self.log.configure(yscrollcommand=scroll.set)
-        scroll.pack(side="right", fill="y")
+    def _draw_empty_wallpaper(self, event):
+        self.empty_canvas.coords(self.empty_window, event.width / 2, event.height / 2)
+        self.empty_canvas.delete("wallpaper")
+        step = 66
+        for row, y in enumerate(range(24, event.height, step)):
+            for column, x in enumerate(range(24, event.width, step)):
+                offset = 30 if row % 2 else 0
+                cx, cy = x + offset, y
+                radius = 2 if (row + column) % 3 else 5
+                self.empty_canvas.create_oval(
+                    cx - radius, cy - radius, cx + radius, cy + radius,
+                    outline="#1c3038", fill="#1c3038", tags="wallpaper"
+                )
+        self.empty_canvas.tag_lower("wallpaper", self.empty_window)
 
     # ---------- screens and status ----------
 
     def show_login(self, message="", colour="offline"):
         self.chat_frame.pack_forget()
-
-        self.login_frame.pack(
-            fill="both",
-            expand=True
-        )
-
-        self.login_message.configure(
-            text=message,
-            fg=STATUS_COLOURS[colour]
-        )
-
+        self.login_frame.pack(fill="both", expand=True)
+        self.login_message.configure(text=message, text_color=STATUS_COLOURS[colour])
         self._set_login_enabled(True)
         self.root.title("Connect | Chat Application")
 
@@ -378,15 +446,13 @@ class ChatApp:
         self.password_var.set("")
         self.current = None
         self.title_var.set("")
+        self.subtitle_var.set("Choose a room or person to start chatting")
         self._render()
         self.add_line(f"Logged in as {self.username}. Pick a room or a person on the left.", "system")
 
     def set_status(self, text, state):
         self.status_var.set(text)
-
-        self.status_dot.configure(
-            foreground=STATUS_COLOURS[state]
-        )
+        self.status_dot.configure(text_color=STATUS_COLOURS[state])
 
     def _set_login_enabled(self, enabled):
         state = "normal" if enabled else "disabled"
@@ -402,31 +468,114 @@ class ChatApp:
 
     def _refresh_sidebar(self):
         self._room_names = sorted(self.rooms, key=str.casefold)
-        self.room_list.delete(0, "end")
-        for name in self._room_names:
+        self._user_names = sorted(
+            (self.online - {self.username}) |
+            {conversation[1] for conversation in self.lines
+             if conversation and conversation[0] == USER},
+            key=str.casefold
+        )
+        for child in self.chat_list.winfo_children():
+            child.destroy()
+
+        query = self.search_var.get().strip().casefold()
+        self.chat_rows = {}
+        groups = (
+            ("GROUPS", [(ROOM, name) for name in self._room_names]),
+            ("PEOPLE", [(USER, name) for name in self._user_names]),
+        )
+        visible_count = 0
+        for heading, conversations in groups:
+            matches = [
+                conversation for conversation in conversations
+                if query in conversation[1].casefold()
+            ]
+            if not matches:
+                continue
+            ctk.CTkLabel(
+                self.chat_list, text=heading, text_color="#7f929c",
+                font=("Segoe UI", 9, "bold"), anchor="w"
+            ).pack(fill="x", padx=12, pady=(8, 5))
+            for kind, name in matches:
+                self._build_chat_row(kind, name)
+                visible_count += 1
+        if not visible_count:
+            message = "No chats match your search." if query else "No conversations yet."
+            ctk.CTkLabel(
+                self.chat_list, text=message, text_color=MUTED,
+                font=("Segoe UI", 11), wraplength=250
+            ).pack(fill="x", padx=12, pady=20)
+
+        if self.current and self.current[0] == ROOM and self.current[1] in self.rooms:
+            info = self.rooms.get(self.current[1], {})
+            joined = info.get("joined", False)
+            subtitle = f"{info.get('members', 0)} members"
+            if not joined:
+                subtitle += " · not joined"
+            if info.get("status") == "RESTRICTED":
+                subtitle += " · read-only"
+            self.subtitle_var.set(subtitle)
+            self.room_action_button.configure(
+                text="Leave group" if joined else "Join group",
+                command=self.leave_selected_room if joined else self.join_selected_room
+            )
+            if not self.room_action_button.winfo_manager():
+                self.room_action_button.pack(side="right", padx=(0, 8))
+        elif self.current and self.current[0] == USER:
+            self.subtitle_var.set("Online" if self.current[1] in self.online else "Offline")
+            self.room_action_button.pack_forget()
+        else:
+            self.room_action_button.pack_forget()
+
+    def _build_chat_row(self, kind, name):
+        conversation = (kind, name)
+        selected = conversation == self.current
+        background = "#1f343b" if selected else "transparent"
+        row = ctk.CTkFrame(
+            self.chat_list, height=68, corner_radius=10, fg_color=background
+        )
+        self.chat_rows[conversation] = row
+        row.pack(fill="x", padx=4, pady=1)
+        row.pack_propagate(False)
+        avatar_color = "#17483f" if kind == ROOM else "#263a42"
+        avatar_text = "▦" if kind == ROOM else (name[:1].upper() or "?")
+        avatar = ctk.CTkLabel(
+            row, text=avatar_text, width=42, height=42, corner_radius=21,
+            fg_color=avatar_color, text_color="#a7e3cf" if kind == ROOM else "#c9d6db",
+            font=("Segoe UI", 14, "bold")
+        )
+        avatar.pack(side="left", padx=(10, 11))
+
+        details = ctk.CTkFrame(row, fg_color="transparent")
+        details.pack(side="left", fill="both", expand=True, pady=12)
+        title = f"# {name}" if kind == ROOM else name
+        ctk.CTkLabel(
+            details, text=title, text_color=TEXT, font=("Segoe UI", 11, "bold"),
+            anchor="w"
+        ).pack(fill="x")
+        history = self.lines.get(conversation, [])
+        if history:
+            preview = history[-1][0].replace("\n", " ")
+        elif kind == ROOM:
             info = self.rooms[name]
-            mark = "• " if (ROOM, name) in self.unread else ("✓ " if info["joined"] else "   ")
-            lock = " (read-only)" if info["status"] == "RESTRICTED" else ""
-            self.room_list.insert("end", f"{mark}#{name}  ({info['members']}){lock}")
-        self._user_names = sorted(self.online - {self.username}, key=str.casefold)
-        self.user_list.delete(0, "end")
-        for name in self._user_names:
-            mark = "• " if (USER, name) in self.unread else "   "
-            self.user_list.insert("end", mark + name)
+            preview = f"{info['members']} members"
+            if info["status"] == "RESTRICTED":
+                preview += " · read-only"
+        else:
+            preview = "Online" if name in self.online else "Start a conversation"
+        ctk.CTkLabel(
+            details, text=preview[:42], text_color=ACCENT if selected else MUTED,
+            font=("Segoe UI", 9), anchor="w"
+        ).pack(fill="x", pady=(3, 0))
+        if conversation in self.unread:
+            ctk.CTkLabel(
+                row, text="●", text_color=ACCENT, font=("Segoe UI", 10)
+            ).pack(side="right", padx=12)
 
-    def _selected(self, listbox, names):
-        selection = listbox.curselection()
-        return names[selection[0]] if selection else None
+        def open_row(_event=None):
+            self.open_conversation(kind, name)
 
-    def _open_selected_room(self):
-        name = self._selected(self.room_list, self._room_names)
-        if name is not None:
-            self.open_conversation(ROOM, name)
-
-    def _open_selected_user(self):
-        name = self._selected(self.user_list, self._user_names)
-        if name is not None:
-            self.open_conversation(USER, name)
+        for widget in (row, avatar, details, *details.winfo_children()):
+            widget.bind("<Button-1>", open_row)
 
     def ask_new_room(self):
         name = simpledialog.askstring("New room", "Room name:", parent=self.root)
@@ -439,14 +588,12 @@ class ChatApp:
             self.open_conversation(USER, name.strip())
 
     def join_selected_room(self):
-        name = self._selected(self.room_list, self._room_names)
-        if name is not None:
-            self.join_room(name)
+        if self.current and self.current[0] == ROOM:
+            self.join_room(self.current[1])
 
     def leave_selected_room(self):
-        name = self._selected(self.room_list, self._room_names)
-        if name is not None:
-            self.leave_room(name)
+        if self.current and self.current[0] == ROOM:
+            self.leave_room(self.current[1])
 
     # ---------- conversations ----------
 
@@ -454,6 +601,10 @@ class ChatApp:
         self.current = (kind, name)
         self.unread.discard(self.current)
         self.title_var.set(conversation_title(self.current))
+        self.header_avatar.configure(
+            text="▦" if kind == ROOM else (name[:1].upper() or "?"),
+            fg_color="#17483f" if kind == ROOM else "#263a42"
+        )
         self._render()
         self._refresh_sidebar()
         if kind == ROOM and not self.rooms.get(name, {}).get("joined"):
@@ -471,6 +622,18 @@ class ChatApp:
             self.history_requested.add(conversation)
 
     def _render(self):
+        if self.current is None:
+            self.log.pack_forget()
+            self.log_scrollbar.pack_forget()
+            if not self.empty_canvas.winfo_manager():
+                self.empty_canvas.pack(fill="both", expand=True)
+            return
+
+        self.empty_canvas.pack_forget()
+        if not self.log_scrollbar.winfo_manager():
+            self.log_scrollbar.pack(side="right", fill="y", padx=(0, 10), pady=12)
+        if not self.log.winfo_manager():
+            self.log.pack(side="left", fill="both", expand=True, padx=(12, 0), pady=12)
         self.log.configure(state="normal")
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
@@ -758,16 +921,9 @@ class ChatApp:
         data = message.get("data", {})
 
         if request_type == "REGISTER":
-            credentials, self.pending_login = (
-                self.pending_login,
-                None
-            )
-
-            self.login_message.configure(
-                text="Account created. Logging in...",
-                fg=STATUS_COLOURS["connected"]
-            )
-
+            credentials, self.pending_login = self.pending_login, None
+            self.login_message.configure(text="Account created. Logging in…",
+                                         text_color=STATUS_COLOURS["connected"])
             if credentials:
                 self.conn.request("LOGIN", credentials)
 
@@ -868,6 +1024,7 @@ class ChatApp:
             if self.current == old_key:
                 self.current = new_key
                 self.title_var.set(conversation_title(new_key))
+                self.subtitle_var.set("Room conversation" if new_key[0] == ROOM else "Direct message")
             self.add_line(f"#{name} was renamed to #{new}.", "system", conversation=new_key)
         self._refresh_sidebar()
 
