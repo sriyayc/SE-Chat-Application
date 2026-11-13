@@ -5,10 +5,11 @@ Skipped where no display is available (for example on CI).
 """
 import gc
 import time
+import tkinter as tk
 
 import pytest
 
-tk = pytest.importorskip("tkinter")
+ctk = pytest.importorskip("customtkinter")
 
 from client.ui.app import ROOM, USER, ChatApp, describe_error  # noqa: E402
 
@@ -16,7 +17,7 @@ from client.ui.app import ROOM, USER, ChatApp, describe_error  # noqa: E402
 @pytest.fixture
 def root():
     try:
-        root = tk.Tk()
+        root = ctk.CTk()
     except tk.TclError as e:
         pytest.skip(f"no display available ({e})")
     root.withdraw()
@@ -134,7 +135,8 @@ def test_rooms_presence_and_unread_markers(root, server_address, connect):
     assert pump(root, lambda: app.username == "alice")
     assert app.online == {"alice", "bob"}
     assert app.rooms["general"]["joined"] is False
-    assert app.user_list.get(0, "end") == ("   bob",)
+    assert (ROOM, "general") in app.chat_rows
+    assert (USER, "bob") in app.chat_rows
 
     app.join_room("general")
     assert pump(root, lambda: app.rooms["general"]["joined"])
@@ -150,7 +152,7 @@ def test_rooms_presence_and_unread_markers(root, server_address, connect):
     # A direct message for a conversation that is not open is marked unread.
     bob.request("MSG", {"to": "alice", "text": "psst"})
     assert pump(root, lambda: (USER, "bob") in app.unread)
-    assert app.user_list.get(0) == "• bob"
+    assert (USER, "bob") in app.chat_rows
     app.open_conversation(USER, "bob")
     assert "psst" in chat_text(app)
     assert (USER, "bob") not in app.unread

@@ -1,7 +1,8 @@
 """Client entry point: python -m client.main [--host HOST] [--port PORT]"""
 import argparse
 import sys
-import tkinter as tk
+
+import customtkinter as ctk
 
 from client.ui.app import ChatApp
 
@@ -29,7 +30,7 @@ def enable_sharp_text():
 def main(argv=None):
     args = parse_args(argv)
     enable_sharp_text()
-    root = tk.Tk()
+    root = ctk.CTk()
     ChatApp(root, args.host, args.port)
     root.mainloop()
     return 0
