@@ -1,4 +1,4 @@
-
+"""
 The chat screen has a sidebar with the rooms and the users who are online, and one
 conversation per room or person. Tkinter must only be touched from the main thread
 (SAD risk R8): the network handler and the connect worker put events on a queue,
